@@ -9,7 +9,7 @@ class LLMService:
             raise ValueError("API key is required")
             
         self.api_key = api_key
-        self.api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
+        self.api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
     
     def generate_answer(self, question: str, context: str) -> str:
         """Generate answer based on context"""

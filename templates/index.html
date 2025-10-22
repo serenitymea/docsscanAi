@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG System for Documents</title>
+    <link rel="stylesheet" href="static/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="icon" href="static/eye_icon.ico" type="image/x-icon">
+
+</head>
+<body>
+        <div class="header">
+            <h1>RAG System for Documents</h1>
+            <p>Upload documents and ask questions based on their content</p>
+        </div>
+        
+        <div class="main-grid">
+            <!-- Left panel: document management -->
+            <div class="card">
+                <h3>Document Management</h3>
+                
+                <div class="file-upload" id="fileUpload">
+                    <p style="font-size: 0.9rem; color: #ffffff; margin-top: 10px;">
+                        Drag file here or click to select</p>
+                    <p style="font-size: 0.9rem; color: #a5a5a5; margin-top: 10px;">
+                        Supported: PDF, DOCX, TXT, CSV, XLSX, HTML, JSON
+                    </p>
+                </div>
+                
+                <input type="file" id="fileInput" accept=".pdf,.docx,.txt,.csv,.xlsx,.html,.json,.md">
+                <input type="text" id="docName" placeholder="Document name (optional)">
+                <button class="btn" id="uploadBtn" disabled>Upload Document</button>
+                
+                <div id="uploadStatus"></div>
+                
+                <!-- Statistics -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <span class="stat-number" id="totalChunks">0</span>
+                        <span class="stat-label">Fragments</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-number" id="totalDocs">0</span>
+                        <span class="stat-label">Documents</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-number" id="avgTime">0.0s</span>
+                        <span class="stat-label">Avg Time</span>
+                    </div>
+                </div>
+                
+                <button class="btn btn-secondary" id="refreshStats">Refresh Statistics</button>
+                <button class="btn btn-danger" id="clearDb">Clear Database</button>
+            </div>
+            
+            <!-- Right panel: chat -->
+            <div class="card">
+                <h3>Ask Questions</h3>
+                
+                <div class="chat-container" id="chatContainer">
+                    <div class="message assistant">
+                        <div class="header">System</div>
+                        <div class="content">Welcome! Upload documents on the left and ask questions about their content.I will find the most relevant information and provide accurate answers.</div>
+                    </div>
+                </div>
+                
+                <textarea id="questionInput" placeholder="Enter your question..."></textarea>
+                <button class="btn" id="askBtn">Ask Question</button>
+                
+                <div id="questionStatus"></div>
+            </div>
+        </div>
+    <script src="static/js/script.js"></script>
+</body>
+</html>
