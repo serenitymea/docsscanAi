@@ -4,7 +4,8 @@
 и отвечает на вопросы по этому тексту, указывая источник ответа.  
 Работает через **FastAPI**, **VoyageAI** (эмбеддинги), **Gemini** (LLM), и **ChromaDB** (векторное хранилище).
 
----
+<img width="1598" height="771" alt="image" src="https://github.com/user-attachments/assets/a8780014-52b2-4c15-b0cd-171557464b29" />
+
 
 ## Что делает
 
@@ -39,3 +40,4 @@ venv\Scripts\activate
 pip install -r requirements.txt
 
 python web_i.py web --voyage-key .key here. --gemini-key .key here.
+
