@@ -1,11 +1,9 @@
 import os
 import time
-import sys
 import argparse
 import tempfile
-import shutil
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import Optional, List, Dict
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import HTMLResponse
@@ -17,246 +15,238 @@ import uvicorn
 from rag_system import RAGSystem
 
 
+ALLOWED_EXTENSIONS = {
+    ".txt", ".pdf", ".docx",
+    ".html", ".htm",
+    ".csv",
+    ".xlsx", ".xls",
+    ".json"
+}
+
+
 class QuestionRequest(BaseModel):
     question: str
-    n_results: Optional[int] = 3
+    n_results: int = 3
 
 
 class QuestionResponse(BaseModel):
     answer: str
     sources: List[Dict]
-    chunks_used: int
     processing_time: float
 
 
 class DocumentResponse(BaseModel):
-    success: bool
     message: str
-    document_name: Optional[str] = None
+    document_name: str
 
 
 class StatsResponse(BaseModel):
-    total_chunks: int
-    total_documents: int
-    documents: List[str]
-
-rag_system: Optional[RAGSystem] = None
+    chunks: int
+    documents: int
+    doc_list: List[str] = []
 
 
-def load_html_template(template_path: str = "templates/index.html") -> str:
-    """Load HTML template from file"""
+def load_template(path: str) -> str:
+    """Load HTML template from file."""
     try:
-        with open(template_path, 'r', encoding='utf-8') as f:
-            return f.read()
-    except FileNotFoundError:
-        return """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>RAG System</title>
-        </head>
-        <body>
-            <h1>RAG System for Documents</h1>
-            <p>HTML template file 'index.html' not found. Please create the template file.</p>
-        </body>
-        </html>
-        """
+        if not os.path.exists(path):
+            print(f"Template not found: {path}")
+            return "<h1>Template not found</h1><p>Please check the template path</p>"
+        return Path(path).read_text(encoding="utf-8")
     except Exception as e:
-        print(f"Error loading HTML template: {e}")
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>RAG System - Error</title>
-        </head>
-        <body>
-            <h1>Error loading template</h1>
-            <p>Error: {str(e)}</p>
-        </body>
-        </html>
-        """
+        print(f"Error loading template: {e}")
+        return f"<h1>Error loading template</h1><p>{str(e)}</p>"
 
 
-def create_app(voyage_key: str, gemini_key: str, db_path: str = "./chroma_db", template_path: str = "index.html") -> FastAPI:
-    """create fastAPI app"""
-    
-    global rag_system
-    
-    app = FastAPI(
-        title="RAG system for docs",
-        description="question-answering system for uploaded documents",
-        version="1.0.0"
-    )
-    
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+def create_app(voyage_key: str, gemini_key: str, db_path: str, template_path: str) -> FastAPI:
+    """Create and configure FastAPI application."""
+    app = FastAPI(title="RAG Document QA")
+
+    print("Initializing RAG system...")
+    rag = RAGSystem(voyage_key, gemini_key, db_path)
+    print("RAG system initialized successfully")
+
+    static_dir = Path("static")
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory="static"), name="static")
+        print(f"Static files mounted from: {static_dir.absolute()}")
+    else:
+        print(f"WARNING: Static directory not found: {static_dir.absolute()}")
 
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
-    try:
-        rag_system = RAGSystem(voyage_key, gemini_key, db_path)
-        print("initialized for web interface")
-    except Exception as e:
-        print(f"initialization error: {str(e)}")
-        raise e
-    
     @app.get("/", response_class=HTMLResponse)
     async def home():
-        """Main page with web interface"""
-        return load_html_template(template_path)
-    
+        """Serve main HTML page."""
+        return load_template(template_path)
+
     @app.post("/api/upload", response_model=DocumentResponse)
-    async def upload_document(
+    async def upload(
         file: UploadFile = File(...),
-        document_name: Optional[str] = Form(None)
+        document_name: Optional[str] = Form(None),
     ):
-        """upload and process document"""
+        """Upload and process a document."""
+        print(f"\n{'='*60}")
+        print(f"Upload request received")
+        print(f"Filename: {file.filename}")
+        print(f"Content type: {file.content_type}")
         
-        if not rag_system:
-            raise HTTPException(status_code=500, detail="RAG system not initialized")
+        ext = Path(file.filename).suffix.lower()
+        print(f"Extension: {ext}")
 
-        allowed_extensions = {'.txt', '.pdf', '.docx', '.html', '.htm', '.csv', '.xlsx', '.xls', '.json', '.md'}
-        file_extension = Path(file.filename or "").suffix.lower()
-        
-        if file_extension not in allowed_extensions:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Unsupported file format. Supported: {', '.join(allowed_extensions)}"
-            )
-        
-        temp_file_path = None
+        if ext not in ALLOWED_EXTENSIONS:
+            print(f"Unsupported extension: {ext}")
+            raise HTTPException(400, f"Unsupported file format: {ext}")
+
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
-                shutil.copyfileobj(file.file, temp_file)
-                temp_file_path = temp_file.name
-
-            doc_name = document_name or file.filename
-            success = rag_system.add_document(temp_file_path, doc_name)
-            
-            if success:
-                return DocumentResponse(
-                    success=True,
-                    message=f"Document '{doc_name}' successfully added to knowledge base",
-                    document_name=doc_name
-                )
-            else:
-                raise HTTPException(status_code=500, detail="Failed to process document")
-                
-        except HTTPException:
-            raise
+            content = await file.read()
+            print(f"File size: {len(content)} bytes")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"File processing error: {str(e)}")
+            print(f"Error reading file: {e}")
+            raise HTTPException(500, f"Error reading file: {str(e)}")
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+            print(f"Temp file: {tmp_path}")
+
+        try:
+            name = document_name or file.filename
+            print(f"Processing document: {name}")
+
+            rag.add_document(tmp_path, name)
+            
+            print(f"Document added successfully: {name}")
+            print(f"{'='*60}\n")
+            
+            return DocumentResponse(
+                message="Document added successfully",
+                document_name=name,
+            )
+            
+        except Exception as e:
+            print(f"Error processing document: {e}")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(500, f"Error processing document: {str(e)}")
+            
         finally:
-            if temp_file_path and os.path.exists(temp_file_path):
-                try:
-                    os.unlink(temp_file_path)
-                except Exception:
-                    pass
-    
-    @app.post("/api/ask", response_model=QuestionResponse)
-    async def ask_question(request: QuestionRequest):
-        """Ask question to the system"""
-        
-        if not rag_system:
-            raise HTTPException(status_code=500, detail="RAG system not initialized")
-        
-        if not request.question.strip():
-            raise HTTPException(status_code=400, detail="Question cannot be empty")
-        
-        try:
-            start_time = time.time()
+            try:
+                os.unlink(tmp_path)
+                print(f"Temp file deleted: {tmp_path}")
+            except Exception as e:
+                print(f"Warning: Could not delete temp file: {e}")
 
-            result = rag_system.ask_question(request.question, request.n_results)
+    @app.post("/api/ask", response_model=QuestionResponse)
+    async def ask(req: QuestionRequest):
+        """Answer a question using the RAG system."""
+        print(f"\n{'='*60}")
+        print(f"Question: {req.question}")
+        
+        if not req.question.strip():
+            raise HTTPException(400, "Question cannot be empty")
+
+        start = time.time()
+        
+        try:
+            result = rag.ask(req.question, req.n_results)
+            elapsed = round(time.time() - start, 2)
             
-            processing_time = time.time() - start_time
-            
+            print(f"Answer generated in {elapsed}s")
+            print(f"Sources: {len(result['sources'])}")
+            print(f"{'='*60}\n")
+
             return QuestionResponse(
-                answer=result['answer'],
-                sources=result['sources'],
-                chunks_used=result['chunks_used'],
-                processing_time=round(processing_time, 2)
+                answer=result["answer"],
+                sources=result["sources"],
+                processing_time=elapsed,
             )
             
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Question processing error: {str(e)}")
-    
+            print(f"Error processing question: {e}")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(500, f"Error: {str(e)}")
+
     @app.get("/api/stats", response_model=StatsResponse)
-    async def get_stats():
-        """get stats"""
-        
-        if not rag_system:
-            raise HTTPException(status_code=500, detail="RAG system not initialized")
-        
+    async def stats():
+        """Get knowledge base statistics."""
         try:
-            stats = rag_system.get_stats()
-            return StatsResponse(**stats)
+            stats_data = rag.stats()
+            print(f"Stats: {stats_data}")
+
+            if "doc_list" not in stats_data:
+                stats_data["doc_list"] = []
+            
+            return StatsResponse(**stats_data)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"stat error: {str(e)}")
-    
+            print(f"Error getting stats: {e}")
+            import traceback
+            traceback.print_exc()
+            return StatsResponse(chunks=0, documents=0, doc_list=[])
+
     @app.delete("/api/clear")
-    async def clear_database():
-        """clear knowledge base"""
-        
-        if not rag_system:
-            raise HTTPException(status_code=500, detail="RAG system not initialized")
-        
+    async def clear():
+        """Clear the knowledge base."""
         try:
-            rag_system.client.delete_collection("documents")
-            rag_system.collection = rag_system.client.get_or_create_collection(
+            print("Clearing knowledge base...")
+            rag.client.delete_collection("documents")
+            rag.collection = rag.client.get_or_create_collection(
                 name="documents",
-                metadata={"hnsw:space": "cosine"}
+                metadata={"hnsw:space": "cosine"},
             )
-            return {"success": True, "message": "Knowledge base cleared"}
+            print("Knowledge base cleared")
+            return {"message": "Knowledge base cleared"}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Clear error: {str(e)}")
-    
+            print(f"Error clearing database: {e}")
+            raise HTTPException(500, f"Error: {str(e)}")
+
     return app
 
 
-def run_web_server(voyage_key: str, gemini_key: str, host: str = "0.0.0.0", port: int = 8000, db_path: str = "./chroma_db", template_path: str = "index.html"):
-    """Start web server"""
-    
-    print("starting interface...")
-    print(f"URL: http://{host}:{port}")
-    print(f"HTML template: {template_path}")
-    print("-" * 60)
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(description="RAG Web Server")
+    parser.add_argument("--voyage-key", required=True, help="Voyage API key")
+    parser.add_argument("--gemini-key", required=True, help="Gemini API key")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
+    parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
+    parser.add_argument("--db-path", default="./chroma_db", help="ChromaDB path")
+    parser.add_argument("--template", default="./templates/index.html", help="HTML template path")
 
-    if not os.path.exists(template_path):
-        print(f"Warning: HTML template '{template_path}' not found!")
-        print("Please make sure the HTML file exists in the same directory.")
-        print("-" * 60)
+    args = parser.parse_args()
+
+    print("\n" + "="*60)
+    print("RAG System Web Server")
+    print("="*60)
+    print(f"Host: {args.host}")
+    print(f"Port: {args.port}")
+    print(f"Template: {args.template}")
+    print(f"Database: {args.db_path}")
+    print("="*60 + "\n")
+
+    if not Path("static").exists():
+        print("WARNING: 'static' directory not found!")
+        print("Please create the following structure:")
+        print("  static/css/style.css")
+        print("  static/js/script.js")
+        print()
     
-    app = create_app(voyage_key, gemini_key, db_path, template_path)
-    
+    if not Path("templates").exists():
+        print("WARNING: 'templates' directory not found!")
+        print("Please create: templates/index.html")
+        print()
+
     uvicorn.run(
-        app,
-        host=host,
-        port=port,
-        log_level="info"
+        create_app(args.voyage_key, args.gemini_key, args.db_path, args.template),
+        host=args.host,
+        port=args.port,
     )
 
-
 if __name__ == "__main__":
-    print("sys for docs")
-    print("chromaDb + voyageAi + gemini")
-    print("-" * 60)
-
-    if len(sys.argv) > 1 and sys.argv[1] == 'web':
-        parser = argparse.ArgumentParser(description='web interface')
-        parser.add_argument('--voyage-key', required=True, help='voyage key')
-        parser.add_argument('--gemini-key', required=True, help='gemini key')
-        parser.add_argument('--host', default='0.0.0.0', help='server host')
-        parser.add_argument('--port', type=int, default=8000, help='server port')
-        parser.add_argument('--db-path', default='./chroma_db', help='database path')
-        parser.add_argument('--template', default='./templates/index.html', help='HTML template file path')
-        
-        args = parser.parse_args(sys.argv[2:])
-        
-        run_web_server(args.voyage_key, args.gemini_key, args.host, args.port, args.db_path, args.template)
-    else:
-        print("usage: python web_i.py web --voyage-key YOUR_KEY --gemini-key YOUR_KEY")
+    main()
